@@ -54,7 +54,7 @@ def pad_and_stack(sent_tensors):
     # Pad all sentences to the max observed size
     padded = torch.stack([F.pad(sent, (0, 0, 0, pad_size-size)) 
                           for sent, size in zip(sent_tensors, sizes)])
-
+    
     return padded, sizes
 
 def pack(padded, sizes, batch_first=True):
@@ -64,7 +64,7 @@ def pack(padded, sizes, batch_first=True):
     size_sort = np.argsort(sizes)[::-1].tolist()
 
     # Resort the tensor accordingly
-    padded = padded[torch.tensor(size_sort)]
+    padded = padded[torch.tensor(size_sort, requires_grad=False)]
 
     # Resort sizes in descending order
     sizes = sorted(sizes, reverse=True)
@@ -73,6 +73,6 @@ def pack(padded, sizes, batch_first=True):
     packed = pack_padded_sequence(padded, sizes, batch_first)
 
     # Regroup indexes for restoring tensor to its original order
-    reorder = torch.LongTensor(np.argsort(size_sort))
+    reorder = torch.tensor(np.argsort(size_sort), requires_grad=False)
 
     return packed, reorder

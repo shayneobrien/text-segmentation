@@ -20,7 +20,7 @@ def token_to_id(token):
 
 def sent_to_tensor(sent):
     """ Convert a sentence to a lookup ID tensor """
-    return to_var(torch.tensor([token_to_id(t) for t in sent.tokens]))
+    return torch.tensor([token_to_id(t) for t in sent.tokens])
 
 
 class LSTMLower(nn.Module):
@@ -33,6 +33,7 @@ class LSTMLower(nn.Module):
         
         self.embeddings = nn.Embedding(weights.shape[0], weights.shape[1])
         self.embeddings.weight.data.copy_(weights)
+        self.embeddings.requires_grad = False
         
         self.lstm = nn.LSTM(weights.shape[1], hidden_dim, num_layers=num_layers,
                             bidirectional=bidir, batch_first=True)
@@ -47,17 +48,17 @@ class LSTMLower(nn.Module):
         
         # Pad and pack embeddings to deal with variable length sequences
         packed, reorder = pad_and_pack(embedded)
-        
+                
         # LSTM over the packed embeddings
         lstm_out, _ = self.lstm(packed)
                 
         # Unpack, unpad, and restore original ordering of lstm outputs
         regrouped = unpack_and_unpad(lstm_out, reorder)
-        
+                
         # Maxpool over the hidden states
         maxpooled = [F.max_pool2d(sent, (sent.shape[1], 1)) 
                      for sent in regrouped]
-        
+                
         # Stack and squeeze to pass into a linear layer
         lower_output = torch.stack(maxpooled)
         
@@ -89,7 +90,7 @@ class Score(nn.Module):
     def __init__(self, input_dim, hidden_dim, out_dim):
         super().__init__()
         
-        self.linear = nn.Sequential(
+        self.score = nn.Sequential(
             nn.Linear(input_dim, hidden_dim),
             nn.ReLU(),
             nn.Linear(hidden_dim, hidden_dim),
@@ -98,7 +99,8 @@ class Score(nn.Module):
         )
         
     def forward(self, higher_output):
-        return self.linear(higher_output).squeeze()
+        scores = self.score(higher_output)
+        return scores.squeeze()
 
 
 class TextSeg(nn.Module):
@@ -111,23 +113,26 @@ class TextSeg(nn.Module):
         num_dirs = 2 if bidir else 1
         input_dim = lstm_dim*num_dirs
         
-        # Chain
-        self.segment = nn.Sequential(
+        # Chain modules together to get overall model
+        self.model = nn.Sequential(
             LSTMLower(lstm_dim, num_layers, bidir),
             LSTMHigher(input_dim, lstm_dim, num_layers, bidir),
             Score(input_dim, score_dim, out_dim=2)
         )
         
     def forward(self, batch):
-        return self.segment(batch)
-    
+        return self.model(batch)
+
+
 class Trainer:
     """ Class to train, validate, and test a model """
     def __init__(self, model, train_dir, val_dir=None, test_dir=None, 
                  lr=1e-3, batch_size=100):
         
-        self.model = to_cuda(model)
-        self.optimizer = optim.Adam(params=[p for p in self.model.parameters() if p.requires_grad], lr=lr)
+        self.model = model
+        self.optimizer = optim.Adam(params=[p for p in self.model.parameters() 
+                                            if p.requires_grad], 
+                                    lr=lr)
         
         self.batch_size = batch_size
         
@@ -144,13 +149,14 @@ class Trainer:
         """ Train the model for one epoch """
         
         epoch_loss, epoch_sents = [], []
-        for _ in tqdm_notebook(range(1, steps+1)):
+        for step in tqdm_notebook(range(1, steps+1)):
             
             # Zero out gradients
             self.optimizer.zero_grad()
             
             # Compute a train batch, backpropagate
             batch_loss, num_sents = self.train_batch()
+            print('Step: %d | Loss: %f | Sents: %d' % (step, batch_loss.item(), num_sents))
             batch_loss.backward()
             
             # For logging purposes
@@ -173,21 +179,21 @@ class Trainer:
         # Sample a batch of documents
         batch = sample_and_read(self.train_dir, self.batch_size)
         
-        batch_loss = 0
-        for doc in tqdm_notebook(batch):
+        # Initialize counts
+        batch_loss, num_sents = 0, 0
+        for doc in batch:
             
             # Get predictions for each document in the batch
-            preds, labels = self.model(doc), to_var(torch.LongTensor(doc.labels))
-            
-            # Compute loss, aggregate
+            preds, labels = self.model(doc), torch.tensor(doc.labels)
+                        
+            # Compute loss
             loss = F.cross_entropy(preds, labels)
+            
+            # Aggregate progress logs
             batch_loss += loss
-        
-        # Compute number of sentences in the batch
-        num_sents = sum([len(d) for d in batch])
+            num_sents += len(doc)
         
         return batch_loss, num_sents
-        
         
     def save_model(self, savepath):
         """ Save model state dictionary """

@@ -119,13 +119,14 @@ def crawl_directory(dirname):
                 yield os.path.join(path, name)
                 
 def sample_and_read(*args):
+    """ Sample some directory path for batch_size number of documents """
     files = sample_nested_dir(*args)
     for f in files:
         yield read_document(f)
                 
 def sample_nested_dir(directory, batch_size=100):
     # TODO: make recursive
-    """ Sample filesw from a nested directory. Probably should be recursive.. """
+    """ Sample files from a nested directory """
     samples, dirname = [], directory
     while len(samples) < batch_size:
         try:
@@ -139,6 +140,7 @@ def sample_nested_dir(directory, batch_size=100):
     return samples[:batch_size]
 
 def safe_listdir(dirname):
+    """ Listdir but without .DS_Store hidden file """
     return [f for f in os.listdir(dirname) if not f.endswith('.DS_Store')]
 
 def read_document(filename, minlen=0):
