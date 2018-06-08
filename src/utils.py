@@ -19,10 +19,7 @@ def unpack_and_unpad(lstm_out, reorder):
     unpack and unpad it. Inverse of pad_and_pack """
     
     # Restore a packed sequence to its padded version
-    unpacked, sizes = pad_packed_sequence(lstm_out)
-    
-    # Batch first (num_sentences, max_seq_len, lstm_out_dim)
-    unpacked = unpacked.transpose(0,1)
+    unpacked, sizes = pad_packed_sequence(lstm_out, batch_first=True)
     
     # Restored a packed sequence to its original, unequal sized tensors
     unpadded = [unpacked[idx][:val] for idx, val in enumerate(sizes)]
@@ -42,18 +39,19 @@ def pad_and_pack(sentences):
     # Pack the variables to mask the padding
     return pack(padded, sizes)
 
-def pad_and_stack(sent_tensors):
-    """ Pad and stack an uneven tensor of token lookup ids """
+def pad_and_stack(tensors):
+    """ Pad and stack an uneven tensor of token lookup ids.
+    Assumes num_sents in first dimension (batch_first=True)"""
     
     # Get their original sizes (measured in number of tokens)
-    sizes = [len(s) for s in sent_tensors]
+    sizes = [s.shape[0] for s in tensors]
     
     # Pad size will be the max of the sizes
     pad_size = max(sizes)
     
     # Pad all sentences to the max observed size
     padded = torch.stack([F.pad(sent, (0, 0, 0, pad_size-size)) 
-                          for sent, size in zip(sent_tensors, sizes)])
+                          for sent, size in zip(tensors, sizes)])
     
     return padded, sizes
 
