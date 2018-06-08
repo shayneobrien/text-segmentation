@@ -46,23 +46,26 @@ class LSTMLower(nn.Module):
         # Embed tokens in each sentence
         embedded = [self.embeddings(s) for s in sent_tensors]
         
-        # Pad and pack embeddings to deal with variable length sequences
+        # Pad, pack  embeddings of variable length sequences of tokens
         packed, reorder = pad_and_pack(embedded)
                 
         # LSTM over the packed embeddings
         lstm_out, _ = self.lstm(packed)
                 
         # Unpack, unpad, and restore original ordering of lstm outputs
-        regrouped = unpack_and_unpad(lstm_out, reorder)
+        restored = unpack_and_unpad(lstm_out, reorder)
                 
         # Maxpool over the hidden states
         maxpooled = [F.max_pool2d(sent, (sent.shape[1], 1)) 
-                     for sent in regrouped]
+                     for sent in restored]
                 
         # Stack and squeeze to pass into a linear layer
-        lower_output = torch.stack(maxpooled)
+        stacked = torch.stack(maxpooled).squeeze()
         
-        return lower_output.squeeze()
+        # Regroup the document sentences for next pad_and_pack
+        lower_output = batch.regroup(stacked)
+        
+        return lower_output
 
 
 class LSTMHigher(nn.Module):
@@ -75,13 +78,19 @@ class LSTMHigher(nn.Module):
 
     def forward(self, lower_output):
         
-        # LSTM needs 3D tensors, so add a dimension
-        lower_output = lower_output.unsqueeze(0)
+        # Pad, pack variable length sentence representations
+        packed, reorder = pad_and_pack(lower_output)
         
         # LSTM over sentence representations
-        higher_output, _ = self.lstm(lower_output)
+        lstm_out, _ = self.lstm(packed)
         
-        return higher_output.squeeze()
+        # Restore original ordering of sentences
+        restored = unpack_and_unpad(lstm_out, reorder)
+        
+        # Concatenate the sentences together for final scoring
+        higher_output = torch.cat([sent.squeeze() for sent in restored])
+        
+        return higher_output
 
 
 class Score(nn.Module):
@@ -100,7 +109,7 @@ class Score(nn.Module):
         
     def forward(self, higher_output):
         scores = self.score(higher_output)
-        return scores.squeeze()
+        return scores
 
 
 class TextSeg(nn.Module):
@@ -126,14 +135,15 @@ class TextSeg(nn.Module):
 
 class Trainer:
     """ Class to train, validate, and test a model """
-    def __init__(self, model, train_dir, val_dir=None, test_dir=None, 
-                 lr=1e-3, batch_size=100):
+    def __init__(self, model, train_dir, val_dir, test_dir=None, 
+                 lr=1e-3, batch_size=10):
         
         self.model = model
         self.optimizer = optim.Adam(params=[p for p in self.model.parameters() 
                                             if p.requires_grad], 
                                     lr=lr)
         
+        self.best_val = 1e10
         self.batch_size = batch_size
         
         self.train_dir = train_dir
@@ -145,7 +155,7 @@ class Trainer:
         for epoch in range(1, num_epochs+1):
             self.train_epoch(epoch, *args, **kwargs)
     
-    def train_epoch(self, epoch, steps=25):
+    def train_epoch(self, epoch, steps=25, val_ckpt=1):
         """ Train the model for one epoch """
         
         epoch_loss, epoch_sents = [], []
@@ -155,9 +165,11 @@ class Trainer:
             self.optimizer.zero_grad()
             
             # Compute a train batch, backpropagate
-            batch_loss, num_sents = self.train_batch()
-            print('Step: %d | Loss: %f | Sents: %d' % (step, batch_loss.item(), num_sents))
+            batch_loss, num_sents, segs_correct = self.train_batch()
             batch_loss.backward()
+            
+            print('Step: %d | Loss: %f | Num. sents: %d | Segs correct: %d'
+                 % (step, batch_loss.item(), num_sents, segs_correct))
             
             # For logging purposes
             epoch_loss.append(batch_loss.item())
@@ -165,36 +177,83 @@ class Trainer:
             
             # Step the optimizer
             self.optimizer.step()
-
-        print('Epoch: %d | Loss: %f | Avg num sents: %d' % (epoch, 
-                                                            np.mean(epoch_loss)), 
-                                                            np.mean(epoch_sents))
+        
+        # Log progress
+        print('Epoch: %d | Loss: %f | Avg num sents: %d\n' 
+              % (epoch, np.mean(epoch_loss), np.mean(epoch_sents))) 
+        
+        # Validation set performance
+        if val_ckpt % epoch:
+            val_loss = self.validate()
+            if val_loss < self.best_val:
+                self.best_val = val_loss
+                self.best_model = deepcopy(self.model)
+            
+            # Log progress
+            print('Validation loss: %f | Best val loss: %f\n' 
+                  % (val_loss, self.best_val))
 
     def train_batch(self):
-        """ Train the model for one batch """
+        """ Train the model using one batch """
         
-        # Enable dropout, any regularization used
+        # Enable dropout, any learnable regularization
         self.model.train()
         
         # Sample a batch of documents
-        batch = sample_and_read(self.train_dir, self.batch_size)
+        batch = sample_and_batch(self.train_dir, self.batch_size)
+
+        # Get predictions for each document in the batch
+        preds = self.model(batch)
+
+        # Compute cross entropy loss, ignoring last entry as it always
+        # ends a subsection without exception
+        batch_loss = F.cross_entropy(preds, batch.labels, 
+                                     size_average=False)
         
-        # Initialize counts
-        batch_loss, num_sents = 0, 0
-        for doc in batch:
+        logits = F.softmax(preds, dim=1)
+        probs, outputs = torch.max(logits, dim=1)
+        
+        segs_correct = self.debugging(preds, batch)
+        
+        return batch_loss, len(batch), segs_correct
+    
+    def debugging(self, preds, batch):
+        """ Check how many segment boundaries were correctly predicted """
+        labels = batch.labels
+        logits = F.softmax(preds, dim=1)
+        probs, outputs = torch.max(logits, dim=1)
+        segs_correct = sum([1 for i,j in zip(batch.labels, outputs) 
+                            if i == j == torch.tensor(1)])
+        
+        return segs_correct
+        
+    def validate(self):
+        """ Compute performance of the model on a valiation set """
+        
+        # Disable dropout, any learnable regularization
+        self.model.eval()
+        
+        # Retrieve all files in the val directory
+        files = crawl_directory(self.val_dir)
+        
+        # Compute loss on this dataset
+        val_loss = 0
+        for file in files:
+            document = read_document(file)
+            preds = self.model(document)
+            loss = F.cross_entropy(preds[:-1], document.labels[:-1])
+            val_loss += loss
             
-            # Get predictions for each document in the batch
-            preds, labels = self.model(doc), torch.tensor(doc.labels)
-                        
-            # Compute loss
-            loss = F.cross_entropy(preds, labels)
-            
-            # Aggregate progress logs
-            batch_loss += loss
-            num_sents += len(doc)
-        
-        return batch_loss, num_sents
-        
+        return val_loss.item()
+
+    def predict(self, document, theta=0.50):
+        """ Given a document, predict segmentation boundaries """
+        preds = self.model(document)
+        logits = F.softmax(preds, dim=1)
+        probs, outputs = torch.max(logits, dim=1)
+        boundaries = outputs.tolist()
+        return boundaries
+
     def save_model(self, savepath):
         """ Save model state dictionary """
         torch.save(self.model.state_dict(), savepath + '.pth')
