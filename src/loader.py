@@ -133,17 +133,17 @@ def crawl_directory(dirname):
             if not name.endswith('.DS_Store'):
                 yield os.path.join(path, name)
                 
-def sample_and_batch(*args):
+def sample_and_batch(*args, TRAIN):
     """ Sample some directory path and Batch the documents """
     files = sample_nested_dir(*args)
-    documents = [read_document(f) for f in files]
+    documents = [read_document(f, TRAIN) for f in files]
     return Batch(documents)
                 
-def sample_and_read(*args):
+def sample_and_read(*args, TRAIN):
     """ Sample some directory path for batch_size number of documents """
     files = sample_nested_dir(*args)
     for f in files:
-        yield read_document(f)
+        yield read_document(f, TRAIN)
                 
 def sample_nested_dir(directory, batch_size=100):
     """ Sample files from a nested directory """
@@ -163,7 +163,7 @@ def safe_listdir(dirname):
     """ Listdir but without .DS_Store hidden file """
     return [f for f in os.listdir(dirname) if not f.endswith('.DS_Store')]
 
-def read_document(filename, minlen=1):
+def read_document(filename, TRAIN, minlen=1):
     """ Read in a Wiki-727 file. 
     Only keep documents longer than minlen subsections. """
     
@@ -186,6 +186,10 @@ def read_document(filename, minlen=1):
     
     # Keep only subsections longer than minlen
     document = [subsection for subsection in document if len(subsection) >= minlen]
+    
+    # As per original paper, remove first subsection during training
+    if TRAIN:
+        document = document[1:]
     
     # Compute labels for the subsections
     labels = doc_to_labels(document)
@@ -211,6 +215,11 @@ def clean_token(token):
         token = re.sub(r"[^a-z0-9\s]", '', token.lower())
         token = re.sub(r"[']+", ' ', token)
     return token
+
+def chunk_list(alist, n):
+    """ Yield successive alist into len(alist)/n chunks of size n """
+    for i in range(0, len(alist), n):
+        yield alist[i:i+n]
 
 def flatten(alist):
     """ Flatten a list of lists into one list """

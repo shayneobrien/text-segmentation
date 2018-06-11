@@ -155,8 +155,11 @@ class Trainer:
         for epoch in range(1, num_epochs+1):
             self.train_epoch(epoch, *args, **kwargs)
     
-    def train_epoch(self, epoch, steps=25, val_ckpt=1):
+    def train_epoch(self, epoch, steps=25, val_ckpt=5):
         """ Train the model for one epoch """
+        
+        # Enable dropout, any learnable regularization
+        self.model.train()
         
         epoch_loss, epoch_sents = [], []
         for step in tqdm_notebook(range(1, steps+1)):
@@ -165,11 +168,11 @@ class Trainer:
             self.optimizer.zero_grad()
             
             # Compute a train batch, backpropagate
-            batch_loss, num_sents, segs_correct = self.train_batch()
+            batch_loss, num_sents, segs_correct, total_segs = self.train_batch()
             batch_loss.backward()
             
-            print('Step: %d | Loss: %f | Num. sents: %d | Segs correct: %d'
-                 % (step, batch_loss.item(), num_sents, segs_correct))
+            print('Step: %d | Loss: %f | Num. sents: %d | Segs correct: %d / %d'
+                 % (step, batch_loss.item(), num_sents, segs_correct, total_segs))
             
             # For logging purposes
             epoch_loss.append(batch_loss.item())
@@ -196,11 +199,8 @@ class Trainer:
     def train_batch(self):
         """ Train the model using one batch """
         
-        # Enable dropout, any learnable regularization
-        self.model.train()
-        
         # Sample a batch of documents
-        batch = sample_and_batch(self.train_dir, self.batch_size)
+        batch = sample_and_batch(self.train_dir, self.batch_size, TRAIN=True)
 
         # Get predictions for each document in the batch
         preds = self.model(batch)
@@ -210,12 +210,14 @@ class Trainer:
         batch_loss = F.cross_entropy(preds, batch.labels, 
                                      size_average=False)
         
+        print([(F.softmax(p, dim=0), l.item()) for p, l in zip(preds, batch.labels)])
+        
         logits = F.softmax(preds, dim=1)
         probs, outputs = torch.max(logits, dim=1)
         
-        segs_correct = self.debugging(preds, batch)
+        segs_correct, total_segs = self.debugging(preds, batch)
         
-        return batch_loss, len(batch), segs_correct
+        return batch_loss, len(batch), segs_correct, total_segs
     
     def debugging(self, preds, batch):
         """ Check how many segment boundaries were correctly predicted """
@@ -225,7 +227,7 @@ class Trainer:
         segs_correct = sum([1 for i,j in zip(batch.labels, outputs) 
                             if i == j == torch.tensor(1)])
         
-        return segs_correct
+        return segs_correct, sum(batch.labels).item()
         
     def validate(self):
         """ Compute performance of the model on a valiation set """
@@ -234,23 +236,28 @@ class Trainer:
         self.model.eval()
         
         # Retrieve all files in the val directory
-        files = crawl_directory(self.val_dir)
-        
+        files = list(crawl_directory(self.val_dir))
+
         # Compute loss on this dataset
         val_loss = 0
-        for file in files:
-            document = read_document(file)
-            preds = self.model(document)
-            loss = F.cross_entropy(preds[:-1], document.labels[:-1])
+        for chunk in chunk_list(files, self.batch_size):
+            batch = Batch([read_document(f, TRAIN=False) for f in chunk])
+            preds = self.model(batch)
+            loss = F.cross_entropy(preds[:-1], batch.labels[:-1])
             val_loss += loss
-            
-        return val_loss.item()
 
-    def predict(self, document, theta=0.50):
-        """ Given a document, predict segmentation boundaries """
-        preds = self.model(document)
+        return val_loss.item()
+    
+    def predict(self, document):
+        """ Given a document, predict segmentations """
+        return self.predict_batch(Batch([document]))
+
+    def predict_batch(self, batch, THETA=0.50):
+        """ Given a batch, predict segmentation boundaries thresholded 
+        by min probability THETA, which needs to be tuned """
+        preds = model(batch)
         logits = F.softmax(preds, dim=1)
-        probs, outputs = torch.max(logits, dim=1)
+        outputs = logits[:, 1] > THETA
         boundaries = outputs.tolist()
         return boundaries
 
