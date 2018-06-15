@@ -2,6 +2,7 @@ import torch
 from torchtext.vocab import Vectors
 
 import os, re, nltk, random
+from boltons.iterutils import windowed
 from cached_property import cached_property
 
 sent_tokenizer = nltk.data.load('tokenizers/punkt/english.pickle')
@@ -24,6 +25,7 @@ class Batch:
         return len(self.sents)
     
     def unravel(self, documents):
+        """ Get document boundary indexes """
         lengths = [0] + [len(d) for d in documents]
         ix = [sum(lengths[:idx+1]) for idx, _ in enumerate(lengths)]
         sents = flatten([d.sents for d in documents])
@@ -31,6 +33,9 @@ class Batch:
         return ix, sents, labels
         
     def regroup(self, groups):
+        """ Regroup any type of groups of same length as documents back
+        into list of lists for each document 
+        (Used for Neural Network hidden states) """
         regrouped = [groups[self.ix[i]:self.ix[i+1]] for i in range(len(self.ix)-1)]
         return regrouped
 
@@ -38,9 +43,10 @@ class Batch:
 class Document:
     """ Contains all sentences in a Wiki article, whether they end a 
     subsection, and the document's filename """
-    def __init__(self, sentences, labels, filename):
+    def __init__(self, sentences, labels, indexes, filename):
         self.sents = sentences
         self.labels = torch.tensor(labels)
+        self.indexes = indexes
         self.filename = filename
     
     def __getitem__(self, idx):
@@ -51,7 +57,14 @@ class Document:
     
     def __len__(self):
         return len(self.sents)
-
+    
+    def reravel(self):
+        """ Group sentences back into subsections 
+        (Used in Hearst baseline) """
+        intervals = windowed(self.indexes, 2)
+        reraveled = [self.sents[i:j] for i, j in windowed(self.indexes, 2)]
+        return reraveled
+            
 
 class Sentence:
     """ Contain text, tokenized text, and label of a sentence """
@@ -169,7 +182,7 @@ def read_document(filename, TRAIN, minlen=1):
     
     # Initialize, open file
     document, subsection = [], ''
-    with open(filename) as f:
+    with open(filename, encoding='utf-8', errors='strict') as f:
         
         # For each line in the file
         for line in f.readlines()[1:]:
@@ -179,7 +192,7 @@ def read_document(filename, TRAIN, minlen=1):
                 document.append(sent_tokenizer.tokenize(subsection.strip()))
                 subsection = ''
             else:
-                subsection += ' ' + line[:-1] # Exclude '\n' from the line
+                subsection += ' ' + line
         
         # Edge case of last subsection needs to be appended
         document.append(sent_tokenizer.tokenize(subsection.strip()))
@@ -193,10 +206,12 @@ def read_document(filename, TRAIN, minlen=1):
     
     # Compute labels for the subsections
     labels = doc_to_labels(document)
+    indexes = doc_to_indexes(document)
 
     # Organize the data into objects, defined above.
     document = Document([Sentence(text, label) for text, label in zip(flatten(document), labels)], 
                          labels,
+                         indexes,
                          filename)
     
     return document
@@ -204,7 +219,12 @@ def read_document(filename, TRAIN, minlen=1):
 def doc_to_labels(document):
     """ Convert Wiki-727 file to labels 
     (last sentence of a subsection is 1, otherwise 0) """
-    return flatten([(len(doc)-1)*[0] + [1] for doc in document])
+    return flatten([(len(subsection)-1)*[0] + [1] for subsection in document])
+
+def doc_to_indexes(document):
+    lengths = [len(subsection) for subsection in document]
+    indexes = [0] + [sum(lengths[:i+1]) for i in range(len(lengths))]
+    return indexes
 
 def clean_token(token):
     """ Remove everything but whitespace, the alphabet, digits; 
@@ -212,8 +232,8 @@ def clean_token(token):
     if token.isdigit():
         token = '#NUM'
     else:
-        token = re.sub(r"[^a-z0-9\s]", '', token.lower())
-        token = re.sub(r"[']+", ' ', token)
+        token = re.sub(r"[^a-z0-9-\s]", '', token.lower())
+        token = re.sub(r"['-]+", ' ', token)
     return token
 
 def chunk_list(alist, n):
