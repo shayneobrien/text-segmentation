@@ -15,6 +15,11 @@ class Evaluate:
     Boundary Edit Distance (EXCLUDED)       [Fournier, (2013)]
     BED-based confusion matrices            [Fournier, (2013)]
     """
+    def __init__(self):
+        pass
+    
+    def __call__(self, *args, **kwargs):
+        return self.metrics(*args, **kwargs)
     
     def metrics(self, batch, preds, sent=True, word=True):
         """ For a given batch and its corresponding preds, get metrics 
@@ -32,11 +37,11 @@ class Evaluate:
                                   val_dir='../data/wiki_50/test',
                                   batch_size=10,
                                   lr=1e-3)  
-            >> evaluation = Evaluate()
+            >> evalu = Evaluate()
             >>
             >> batch = sample_and_batch(trainer.train_dir, trainer.batch_size, TRAIN=True)
             >> preds = trainer.predict_batch(batch)
-            >> evaluation(batch, preds)
+            >> evalu(batch, preds)
         """
         metric_dict = defaultdict(dict)
         
@@ -110,18 +115,40 @@ class Evaluate:
         seg_sents = [indexes[ix+1]-indexes[ix] 
                      for ix in range(len(indexes)-1)]
         
+        # Happens when zero segmentations predicted
+        if not seg_sents:
+            seg_sents = [len(labels)]
+
         return seg_sents
 
     def _words_per_seg(self, lengths, labels):
         """ Count words included in each segment """
         # Get indexes of boundary segmentations (where 1s are)
-        ids = self._boundary_ids(labels)
+        indexes = self._boundary_ids(labels)
         
         # How many words are in each sentence
-        seg_words = [sum(lengths[i1:i2]) for i1, i2 in windowed(ids, 2)]
+        seg_words = [sum(lengths[i1:i2]) 
+                     for i1, i2 in windowed(indexes, 2)]
+        
+        # Happens when zero segmentations predicted
+        if not seg_words:
+            seg_words = [sum(lengths)]
         
         return seg_words
 
     def _boundary_ids(self, labels):
         """ From labels, extract boundary indexes """
-        return [0] + [idx for idx, val in enumerate(labels) if val == 1]
+        return [0] + [idx+1 for idx, val in enumerate(labels) if val == 1]
+
+
+def avg_dicts(d1, d2):
+    """ Average two dictionaries together across their shared keys """
+    merged = defaultdict(dict)
+    levels = set(list(d1.keys()) + list(d2.keys()))
+
+    for level in levels:
+        keys =  set(list(d1[level]) + list(d2[level]))
+        for k in keys:
+            merged[level][k] = (d1[level][k] + d2[level][k])/2
+            
+    return merged
