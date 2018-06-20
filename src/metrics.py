@@ -37,7 +37,7 @@ class Metrics:
                                   val_dir='../data/wiki_50/test',
                                   batch_size=10,
                                   lr=1e-3)  
-            >> evalu = Evaluate()
+            >> evalu = Metrics()
             >>
             >> batch = sample_and_batch(trainer.train_dir, trainer.batch_size, TRAIN=True)
             >> preds = trainer.predict_batch(batch)
