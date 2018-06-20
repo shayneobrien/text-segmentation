@@ -1,3 +1,10 @@
+# TODO:
+# Saving progress on metrics and loss over time
+# Add mask, add class weights?
+
+# Baselines: Random (✓), Hearst (✓), Choi, GraphSeg, Linear Regression (✓)
+# Argparse, run.py for downloading data
+
 import torch
 import torch.optim as optim
 import torch.nn as nn
@@ -7,8 +14,9 @@ import numpy as np
 from copy import deepcopy
 from tqdm import tqdm, tqdm_notebook
 
-from src.loader import *
-from src.utils import *
+from loader import *
+from utils import *
+from metrics import Metrics, avg_dicts
 
 # Load in corpus, lazily load in word vectors.
 VECTORS = LazyVectors()
@@ -134,6 +142,9 @@ class TextSeg(nn.Module):
 
 class Trainer:
     """ Class to train, validate, and test a model """
+    
+    losses, val_loss, metrics = [], [], []
+    
     def __init__(self, model, train_dir, val_dir, test_dir=None, 
                  lr=1e-3, batch_size=10):
         
@@ -147,7 +158,9 @@ class Trainer:
         
         self.train_dir = train_dir
         self.val_dir = val_dir
-        self.test_dir = test_dir
+        self.test_dir = test_dir if test_dir else val_dir
+        
+        self.evalu = Metrics()
     
     def train(self, num_epochs, *args, **kwargs):
         """ Train a model """
@@ -181,12 +194,14 @@ class Trainer:
             self.optimizer.step()
         
         # Log progress
-        print('Epoch: %d | Loss: %f | Avg num sents: %d\n' 
+        print('\nEpoch: %d | Loss: %f | Avg. num sents: %d\n' 
               % (epoch, np.mean(epoch_loss), np.mean(epoch_sents))) 
         
         # Validation set performance
-        if val_ckpt % epoch:
-            val_loss = self.validate()
+        if epoch % val_ckpt == 0:
+            
+            metrics_dict, val_loss = self.evaluate(self.val_dir)
+            
             if val_loss < self.best_val:
                 self.best_val = val_loss
                 self.best_model = deepcopy(self.model)
@@ -194,6 +209,8 @@ class Trainer:
             # Log progress
             print('Validation loss: %f | Best val loss: %f\n' 
                   % (val_loss, self.best_val))
+            
+            print(metrics_dict)
 
     def train_batch(self):
         """ Train the model using one batch """
@@ -209,11 +226,10 @@ class Trainer:
         batch_loss = F.cross_entropy(preds, batch.labels, 
                                      size_average=False)
         
-        print([(F.softmax(p, dim=0), l.item()) for p, l in zip(preds, batch.labels)])
+        # Debugging
+#         print([(F.softmax(p, dim=0), l.item()) for p, l in zip(preds, batch.labels)])
         
-        logits = F.softmax(preds, dim=1)
-        probs, outputs = torch.max(logits, dim=1)
-        
+        # Number of boundaries correctly predicted
         segs_correct, total_segs = self.debugging(preds, batch)
         
         return batch_loss, len(batch), segs_correct, total_segs
@@ -227,25 +243,41 @@ class Trainer:
                             if i == j == torch.tensor(1)])
         
         return segs_correct, sum(batch.labels).item()
+    
+    def evaluate(self, dirname):
+        """ Evaluate using SegEval text segmentation metrics """
         
-    def validate(self):
-        """ Compute performance of the model on a valiation set """
+        print('Evaluating across SegEval metrics.')
         
         # Disable dropout, any learnable regularization
         self.model.eval()
         
-        # Retrieve all files in the val directory
-        files = list(crawl_directory(self.val_dir))
-
-        # Compute loss on this dataset
-        val_loss = 0
+        # Initialize val directory files, dictionaries list
+        files, dicts_list = list(crawl_directory(dirname)), []
+        
+        eval_loss = 0
+        # Break into chunks for memory constraints
         for chunk in chunk_list(files, self.batch_size):
+            
+            # Batchify documents
             batch = Batch([read_document(f, TRAIN=False) for f in chunk])
-            preds = self.model(batch)
-            loss = F.cross_entropy(preds, batch.labels)
-            val_loss += loss
+            
+            # Predict the batch
+            preds, logits = self.predict_batch(batch)
+            
+            # Compute validation loss
+            eval_loss += F.cross_entropy(logits, batch.labels)
+            
+            # Evaluate across SegEval metrics
+            metric_dict = self.evalu(batch, preds)
+            
+            # Save the batch performance
+            dicts_list.append(metric_dict)
 
-        return val_loss.item()
+        # Average dictionaries
+        eval_metrics = avg_dicts(dicts_list)
+        
+        return eval_metrics, eval_loss.item()
     
     def predict(self, document):
         """ Given a document, predict segmentations """
@@ -254,11 +286,20 @@ class Trainer:
     def predict_batch(self, batch, THETA=0.50):
         """ Given a batch, predict segmentation boundaries thresholded 
         by min probability THETA, which needs to be tuned """
-        preds = model(batch)
-        logits = F.softmax(preds, dim=1)
-        outputs = logits[:, 1] > THETA
-        boundaries = outputs.tolist()
-        return boundaries
+        
+        # Predict
+        logits = self.model(batch)
+        
+        # Softmax for probabilities
+        probs = F.softmax(logits, dim=1)
+        
+        # If greater than threshold theta, make it a boundary
+        boundaries = probs[:, 1] > THETA
+        
+        # Convert from tensor to list
+        preds = boundaries.tolist()
+        
+        return preds, logits
 
     def save_model(self, savepath):
         """ Save model state dictionary """
@@ -275,7 +316,8 @@ model = TextSeg(lstm_dim=200, score_dim=200, bidir=True, num_layers=2)
 trainer = Trainer(model=model,
                   train_dir='../data/wiki_727/train', 
                   val_dir='../data/wiki_50/test',
-                  batch_size=10,
+                  batch_size=3,
                   lr=1e-3)
 
-trainer.train(num_epochs=30, steps=10)
+trainer.train(num_epochs=30, steps=2, val_ckpt=1)
+
