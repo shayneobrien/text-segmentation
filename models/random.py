@@ -1,12 +1,21 @@
 import random
-from src.loader import flatten, crawl_directory, sent_tokenizer
+from loader import flatten, crawl_directory, sent_tokenizer, PseudoBatch
+from metrics import Metrics
+
+from cached_property import cached_property
+
+# Set random seed
+random.seed(1)
 
 
 class Random:
+    
+    evalu = Metrics()
+    
     """ Random prediction baseline """
     def __init__(self, test_dir):
         self.test_dir = test_dir
-        self.probabiilty, self.labels = self.parametrize()
+        self.probability, self.labels, self.counts = self.parametrize()
         
     def __call__(self, *args):
         return self.validate(*args)
@@ -14,11 +23,13 @@ class Random:
     def validate(self):
         """ Sample N floats in range [0,1]. If a float is less than the inverse
         of the average segment length, then say that is a predicted segmentation """
-        samples = [random.random() for _ in range(len(self.labels))]
-        preds = [1 if s < self.probabiilty else 0 
+        samples = [random.random() for _ in self.labels]
+        preds = [1 if s <= self.probability else 0 
                  for s in samples]
+        batch = PseudoBatch(self.counts, self.labels)
+        metrics_dict = self.evalu(batch, preds)
         
-        return preds, self.labels
+        return batch, preds, metrics_dict
     
     def parametrize(self):
         """ Return 1 / average segment as random probability pred, test_dir's labels """
@@ -27,14 +38,14 @@ class Random:
         avg_segs = sum(counts) / len(counts)
         probability = 1 / avg_segs
         
-        return probability, labels
+        return probability, labels, counts
     
     def parse_files(self, filename, minlen=1):
         """ Count number of segments in each subsection of a document """
         counts, subsection = [], ''
         with open(filename, encoding='utf-8', errors='strict') as f:
 
-            # For each line in the file
+            # For each line in the file, skipping initial break
             for line in f.readlines()[1:]:
 
                 # This '========' indicates a new subsection
@@ -53,6 +64,8 @@ class Random:
         """ Convert counts of segments to labels (all but last sentence
         in a subsection are 0; last is 1, since it ends the subsection) """
         return flatten([(c-1)*[0] + [1] for c in counts])
-    
+
+
 random_baseline = Random(test_dir='../data/wiki_50/test')
-random_baseline()
+batch, preds, metrics_dict = random_baseline()
+print(metrics_dict)
