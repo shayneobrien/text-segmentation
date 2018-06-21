@@ -1,11 +1,8 @@
 import random
 from loader import flatten, crawl_directory, sent_tokenizer, PseudoBatch
-from metrics import Metrics
+from metrics import Metrics, avg_dicts
 
-from cached_property import cached_property
-
-# Set random seed
-random.seed(1)
+from tqdm import tqdm
 
 
 class Random:
@@ -64,8 +61,19 @@ class Random:
         """ Convert counts of segments to labels (all but last sentence
         in a subsection are 0; last is 1, since it ends the subsection) """
         return flatten([(c-1)*[0] + [1] for c in counts])
-
-
+    
+    def cross_validate(self, trials=100):
+        """ Run random across many seed initializations """
+        for seed in tqdm(range(trials)):
+            random.seed(i)
+            batch, preds, metrics_dict = self.validate()
+            dictionaries.append(metrics_dict)
+        
+        merged = avg_dicts(dictionaries)
+        return merged
+        
 random_baseline = Random(test_dir='../data/wiki_50/test')
-batch, preds, metrics_dict = random_baseline()
-print(metrics_dict)
+_, _, metrics_dict = random_baseline()
+# metrics_dict = random_baseline.cross_validate(100)
+for k, v in metrics_dict.items():
+    print(k, ':', v)
