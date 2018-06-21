@@ -83,6 +83,17 @@ class Sentence:
         return len(self.tokens)
 
 
+class PseudoBatch:    
+    """ For baseline methods we do not need the full Batch class; 
+    this object contains just the information necessary for Metrics """
+    def __init__(self, counts, labels):
+        self.sents = [[0]*c for c in counts]
+        self.labels = labels
+        
+    def __getitem__(self, idx):
+        return self.sents[idx]
+
+
 class LazyVectors:
     """Load only those vectors from GloVE that are in the vocab."""
     
@@ -103,12 +114,6 @@ class LazyVectors:
     def loader(self):
         return Vectors(self.name)
     
-    def get_vocab(self, filename='vocabulary.txt'):
-        """ Read in vocabulary (top 30K words, covers ~93.5% of all tokens) """ 
-        with open(filename, 'r') as f:
-            vocab = f.read().split(',')
-        return vocab
-    
     def set_vocab(self):
         """Set corpus vocab """
         # Intersect with model vocab.
@@ -117,6 +122,12 @@ class LazyVectors:
 
         # Map string -> intersected index.
         self._stoi = {s: i for i, s in enumerate(self.vocab)}
+    
+    def get_vocab(self, filename='vocabulary.txt'):
+        """ Read in vocabulary (top 30K words, covers ~93.5% of all tokens) """ 
+        with open(filename, 'r') as f:
+            vocab = f.read().split(',')
+        return vocab
 
     def weights(self):
         """Build weights tensor for embedding layer """

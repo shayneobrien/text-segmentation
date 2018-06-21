@@ -138,7 +138,9 @@ class Metrics:
 
     def _boundary_ids(self, labels):
         """ From labels, extract boundary indexes """
-        return [0] + [idx+1 for idx, val in enumerate(labels) if val == 1]
+        return ([0] + 
+                [idx+1 for idx, val in enumerate(labels[:-1]) if val == 1] + 
+                [len(labels)])
 
 
 def avg_dicts(dicts_list):
