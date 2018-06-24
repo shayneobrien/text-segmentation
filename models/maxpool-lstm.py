@@ -1,10 +1,3 @@
-# TODO:
-# Resuming training?
-# Add mask, add class weights?
-
-# Baselines: Random (✓), Hearst (✓), Choi, GraphSeg, Linear Regression (✓)
-# Argparse, run.py for downloading data
-
 import torch
 import torch.optim as optim
 import torch.nn as nn
@@ -212,7 +205,7 @@ class Trainer:
         # Validation set performance
         if epoch % val_ckpt == 0:
             
-            metrics_dict, val_loss = self.evaluate(self.val_dir)
+            metrics_dict, val_loss = self.validate(self.val_dir)
             
             # Log progress
             self.val_loss.append(val_loss)
@@ -226,7 +219,6 @@ class Trainer:
             # Log progress
             print('Validation loss: %f | Best val loss: %f\n' 
                   % (val_loss, self.best_val))
-            
             if visualize:
                 self.viz()
 
@@ -263,7 +255,7 @@ class Trainer:
         
         return segs_correct, total_segs
     
-    def evaluate(self, dirname):
+    def validate(self, dirname):
         """ Evaluate using SegEval text segmentation metrics """
         
         print('Evaluating across SegEval metrics.')
@@ -376,8 +368,7 @@ class Trainer:
         plt.show()
 
 
-# Original paper does 10 epochs across full dataset, batch size 8, hidden sizes
-# 256, lr 1e-3
+# Original paper does 10 epochs across full dataset
 model = TextSeg(lstm_dim=256, score_dim=256, bidir=True, num_layers=2)
 trainer = Trainer(model=model,
                   train_dir='../data/wiki_727/train', 
@@ -386,3 +377,4 @@ trainer = Trainer(model=model,
                   lr=1e-3)
 
 trainer.train(num_epochs=100, steps=25, val_ckpt=1)
+
