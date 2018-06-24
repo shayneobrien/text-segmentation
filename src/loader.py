@@ -70,7 +70,7 @@ class Sentence:
     """ Contain text, tokenized text, and label of a sentence """
     def __init__(self, text, label):
         self.text = text
-        self.tokens = [clean_token(t) for t in text.split()]
+        self.tokens = flatten([clean_token(t) for t in text.split()])
         self.label = label
         
     def __getitem__(self, idx):
@@ -240,12 +240,21 @@ def doc_to_indexes(document):
 def clean_token(token):
     """ Remove everything but whitespace, the alphabet, digits; 
     separate apostrophes for stopwords; replace only digit tokens """
-    if token.isdigit():
+    if has_digits(token):
         token = '#NUM'
     else:
         token = re.sub(r"[^a-z0-9-\s]", '', token.lower())
         token = re.sub(r"['-]+", ' ', token)
-    return token
+    return token.split()
+
+def has_digits(string):
+    """ Check if a string has any numbers in it """
+    return bool(re.search(r'\d', string))
+
+def counts_to_labels(counts):
+    """ Convert counts of segments to labels (all but last sentence
+    in a subsection are 0; last is 1, since it ends the subsection) """
+    return flatten([(c-1)*[0] + [1] for c in counts])
 
 def chunk_list(alist, n):
     """ Yield successive alist into len(alist)/n chunks of size n """
