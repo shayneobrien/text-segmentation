@@ -120,7 +120,7 @@ class Trainer:
         
         # Validation set performance
         if val_ckpt % epoch:
-            val_loss = self.validate()
+            val_loss = self.validate(self.val_dir)
             if val_loss < self.best_val:
                 self.best_val = val_loss
                 self.best_model = deepcopy(self.model)
@@ -162,14 +162,14 @@ class Trainer:
         
         return segs_correct, sum(batch.labels).item()
         
-    def validate(self):
+    def validate(self, dirname):
         """ Compute performance of the model on a valiation set """
         
         # Disable dropout, any learnable regularization
         self.model.eval()
         
         # Retrieve all files in the val directory
-        files = list(crawl_directory(self.val_dir))
+        files = list(crawl_directory(dirname))
 
         # Compute loss on this dataset
         val_loss = 0
@@ -180,6 +180,7 @@ class Trainer:
             val_loss += loss
 
         return val_loss.item()
+
 
 model = LinearRegression()
 trainer = Trainer(model=model,
