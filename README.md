@@ -1,11 +1,9 @@
 # Text Segmentation
-Neural supervised text segmentation
+Neural and nonneural text segmentation algorithms.
 
 # TODOs:
-SegEval package evaluation methods class
-Loader, sampler for each dataset
-Reformatting script for Cities, Elements datasets
-Baselines: Random, Choi, GraphSeg, Hearst (✓), Linear Regression (?), Louvaine (?)
+run.py for downloading all datasets
+Baselines: Random (✓), Hearst (✓), Linear Regression (✓), GraphSeg, Choi
 Argparse, streamlining tests
 
 # Datasets
