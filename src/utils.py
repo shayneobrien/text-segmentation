@@ -39,7 +39,7 @@ def pad_and_pack(sentences):
     # Pack the variables to mask the padding
     return pack(padded, sizes)
 
-def pad_and_stack(tensors):
+def pad_and_stack(tensors, pad_size=None):
     """ Pad and stack an uneven tensor of token lookup ids.
     Assumes num_sents in first dimension (batch_first=True)"""
     
@@ -47,10 +47,11 @@ def pad_and_stack(tensors):
     sizes = [s.shape[0] for s in tensors]
     
     # Pad size will be the max of the sizes
-    pad_size = max(sizes)
+    if not pad_size:
+        pad_size = max(sizes)
     
     # Pad all sentences to the max observed size
-    padded = torch.stack([F.pad(sent, (0, 0, 0, pad_size-size)) 
+    padded = torch.stack([F.pad(sent[:pad_size], (0, 0, 0, max(0, pad_size-size))) 
                           for sent, size in zip(tensors, sizes)])
     
     return padded, sizes
