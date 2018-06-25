@@ -29,25 +29,26 @@ def sent_to_tensor(sent):
 class LSTMLower(nn.Module):
     """ LSTM over a Batch of variable length sentences, maxpool over
     each sentence's hidden states to get its representation. """    
-    def __init__(self, hidden_dim, num_layers, bidir):
+    def __init__(self, hidden_dim, num_layers, bidir, drop_prob):
         super().__init__()
         
         weights = VECTORS.weights()
         
         self.embeddings = nn.Embedding(weights.shape[0], weights.shape[1])
         self.embeddings.weight.data.copy_(weights)
-        self.embeddings.requires_grad = False
+        
+        self.drop = drop_prob
         
         self.lstm = nn.LSTM(weights.shape[1], hidden_dim, num_layers=num_layers,
-                            bidirectional=bidir, batch_first=True)
-
+                            bidirectional=bidir, batch_first=True, dropout=self.drop)
+        
     def forward(self, batch):
         
         # Convert sentences to embed lookup ID tensors
         sent_tensors = [sent_to_tensor(s) for s in batch]
         
         # Embed tokens in each sentence
-        embedded = [self.embeddings(s) for s in sent_tensors]
+        embedded = [F.dropout(self.embeddings(s), self.drop) for s in sent_tensors]
         
         # Pad, pack  embeddings of variable length sequences of tokens
         packed, reorder = pad_and_pack(embedded)
@@ -73,11 +74,13 @@ class LSTMLower(nn.Module):
 
 class LSTMHigher(nn.Module):
     """ LSTM over the sentence representations from LSTMLower """
-    def __init__(self, input_dim, hidden_dim, num_layers, bidir):
+    def __init__(self, input_dim, hidden_dim, num_layers, bidir, drop_prob):
         super().__init__()
         
+        self.drop = drop_prob
+        
         self.lstm = nn.LSTM(input_dim, hidden_dim, num_layers=num_layers,
-                            bidirectional=bidir, batch_first=True)
+                            bidirectional=bidir, batch_first=True, dropout=self.drop)
 
     def forward(self, lower_output):
         
@@ -99,14 +102,16 @@ class LSTMHigher(nn.Module):
 class Score(nn.Module):
     """ Take outputs from LSTMHigher, produce probabilities for each
     sentence that it ends a segment. """
-    def __init__(self, input_dim, hidden_dim, out_dim):
+    def __init__(self, input_dim, hidden_dim, out_dim, drop_prob):
         super().__init__()
         
         self.score = nn.Sequential(
             nn.Linear(input_dim, hidden_dim),
             nn.ReLU(),
+            nn.Dropout(drop_prob),
             nn.Linear(hidden_dim, hidden_dim),
             nn.ReLU(), 
+            nn.Dropout(drop_prob),
             nn.Linear(hidden_dim, out_dim),
         )
         
@@ -118,7 +123,7 @@ class Score(nn.Module):
 class TextSeg(nn.Module):
     """ Super class for taking an input batch of sentences from a Batch
     and computing the probability whether they end a segment or not """
-    def __init__(self, lstm_dim, score_dim, bidir, num_layers=2):
+    def __init__(self, lstm_dim, score_dim, bidir, num_layers=2, drop_prob=0.20):
         super().__init__()
         
         # Compute input dimension size for LSTMHigher, Score
@@ -127,9 +132,9 @@ class TextSeg(nn.Module):
         
         # Chain modules together to get overall model
         self.model = nn.Sequential(
-            LSTMLower(lstm_dim, num_layers, bidir),
-            LSTMHigher(input_dim, lstm_dim, num_layers, bidir),
-            Score(input_dim, score_dim, out_dim=2)
+            LSTMLower(lstm_dim, num_layers, bidir, drop_prob),
+            LSTMHigher(input_dim, lstm_dim, num_layers, bidir, drop_prob),
+            Score(input_dim, score_dim, out_dim=2, drop_prob=drop_prob)
         )
         
     def forward(self, batch):
@@ -377,4 +382,3 @@ trainer = Trainer(model=model,
                   lr=1e-3)
 
 trainer.train(num_epochs=100, steps=25, val_ckpt=1)
-
