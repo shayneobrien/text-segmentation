@@ -21,71 +21,68 @@ def token_to_id(token):
     """ Lookup word ID for a token """
     return VECTORS.stoi(token)
 
-def sent_to_tensor(sent):
+def sent_to_tensor(sent, MAXLEN=64):
     """ Convert a sentence to a lookup ID tensor """
     return torch.tensor([token_to_id(t) for t in sent.tokens])
 
 
-class LSTMEncoder(nn.Module):
+class CNNEncoder(nn.Module):
     """ LSTM over a Batch of variable length sentences, maxpool over
-    each sentence's hidden states to get its representation. """    
-    def __init__(self, hidden_dim, num_layers, bidir, drop_prob, method):
+    each sentence's hidden states to get its representation. """
+        
+    def __init__(self, hidden_dim, drop_prob, maxlen, nrange, method):
         super().__init__()
         
+        assert type(nrange) == list, 'Argument "nrange" is a list of token convolution sizes.'
         assert method in ['avg', 'last', 'max', 'sum'], 'Invalid method chosen.'
         self.method = eval('self._'+ method)
         
         weights = VECTORS.weights()
         
-        self.embeddings = nn.Embedding(weights.shape[0], weights.shape[1])
+        self.embeddings = nn.Embedding(weights.shape[0], weights.shape[1], padding_idx=0)
         self.embeddings.weight.data.copy_(weights)
+                
+        self.convs = nn.ModuleList([nn.Conv1d(in_channels=weights.shape[1], 
+                                              out_channels=hidden_dim,
+                                              kernel_size=n)
+                                    for n in nrange])
         
         self.drop = drop_prob
-        
-        self.lstm = nn.LSTM(weights.shape[1], hidden_dim, num_layers=num_layers,
-                            bidirectional=bidir, batch_first=True, dropout=self.drop)
-        
+        self.maxlen = maxlen
+    
     def forward(self, batch):
         
         # Convert sentences to embed lookup ID tensors
-        sent_tensors = [sent_to_tensor(s) for s in batch]
+        sent_tensors = [sent_to_tensor(s).unsqueeze(1) for s in batch]
         
-        # Embed tokens in each sentence
-        embedded = [F.dropout(self.embeddings(s), self.drop) for s in sent_tensors]
-
-        # Pad, pack  embeddings of variable length sequences of tokens
-        packed, reorder = pad_and_pack(embedded)
+        # Pad to maximum length sentence in the batch
+        padded, _ = pad_and_stack(sent_tensors, pad_size=self.maxlen)
+        
+        # Embed tokens in each sentence, apply dropout, transpose for input to CNN
+        embedded = F.dropout(self.embeddings(padded), 0.20).squeeze().transpose(1,2)
+    
+        # Convolve over words
+        convolved = [conv(embedded) for conv in self.convs]
+        
+        # Cat together convolutions
+        catted = torch.cat(convolved, dim=2)
                 
         # LSTM over the packed embeddings
-        lstm_out, _ = self.lstm(packed)
-                
-        # Unpack, unpad, and restore original ordering of lstm outputs
-        restored = unpack_and_unpad(lstm_out, reorder)
-        
-        # Get lower output representation
-        representation = self.method(restored)
+        representation = self.method(catted)
         
         return representation
     
-    def _avg(self, restored):
+    def _avg(self, catted):
         """ Average hidden states """
-        averaged = [sent.mean(dim=1) for sent in restored]
-        return torch.stack(averaged).squeeze()
-    
-    def _last(self, restored):
-        """ Take last hidden state representation """
-        last = [sent[:, -1, :] for sent in restored]
-        return torch.stack(last).squeeze()
+        return catted.mean(dim=1)
         
-    def _max(self, restored):
+    def _max(self, catted):
         """ Maxpool over LSTM sentence states """
-        maxpooled = [F.max_pool2d(sent, (sent.shape[1], 1)) for sent in restored]
-        return torch.stack(maxpooled).squeeze()
+        return F.max_pool2d(catted, kernel_size=(catted.shape[1], 1)).squeeze()
         
-    def _sum(self, restored):
+    def _sum(self, catted):
         """ Sum LSTM sentence states """
-        summed = [sent.sum(dim=1) for sent in restored]
-        return torch.stack(summed).squeeze()
+        return catted.sum(dim=1)
 
 
 class Score(nn.Module):
@@ -103,25 +100,24 @@ class Score(nn.Module):
             nn.Dropout(drop_prob),
             nn.Linear(hidden_dim, out_dim),
         )
-        
+
     def forward(self, higher_output):
         scores = self.score(higher_output)
         return scores
 
 
-class ScoreLSTM(nn.Module):
+class ScoreCNN(nn.Module):
     """ Super class for taking an input batch of sentences from a Batch
     and computing the probability whether they end a segment or not """
-    def __init__(self, lstm_dim, score_dim, bidir, num_layers=2, drop_prob=0.20, method='max'):
+    def __init__(self, hidden_dim, score_dim, drop_prob, maxlen, nrange, method):
         super().__init__()
-        
-        # Compute input dimension size for LSTMHigher, Score
-        num_dirs = 2 if bidir else 1
-        input_dim = lstm_dim*num_dirs
+                
+        # Compute input dimension size for Score
+        input_dim = sum([maxlen - (n-1) for n in nrange])
         
         # Chain modules together to get overall model
         self.model = nn.Sequential(
-            LSTMEncoder(lstm_dim, num_layers, bidir, drop_prob, method),
+            CNNEncoder(hidden_dim, drop_prob, maxlen, nrange, method),
             Score(input_dim, score_dim, out_dim=2, drop_prob=drop_prob)
         )
         
@@ -322,6 +318,7 @@ class Trainer:
         
     def viz(self):
         """ Visualize progress: train loss, val loss, word- sent-level metrics """
+        
         # Initialize plot
         _, axes = plt.subplots(ncols=2, nrows=2, sharex='col', sharey='col')
         val, word, train, sent = axes.ravel()
@@ -363,7 +360,7 @@ class Trainer:
 
 
 # Original paper does 10 epochs across full dataset
-model = ScoreLSTM(lstm_dim=256, score_dim=256, bidir=True, num_layers=2, drop_prob=0.20, method='max')
+model = ScoreCNN(hidden_dim=256, score_dim=256, drop_prob=0.20, maxlen=64, nrange=[3,4,5], method='max')
 trainer = Trainer(model=model,
                   train_dir='../data/wiki_727/train', 
                   val_dir='../data/wiki_50/test',
