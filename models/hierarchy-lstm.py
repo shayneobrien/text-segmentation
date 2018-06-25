@@ -393,7 +393,7 @@ class Trainer:
 
 
 # Original paper does 10 epochs across full dataset
-model = TextSeg(lstm_dim=256, score_dim=256, bidir=True, num_layers=2)
+model = TextSeg(lstm_dim=256, score_dim=256, bidir=True, num_layers=2, drop_prob=0.20, method='max')
 trainer = Trainer(model=model,
                   train_dir='../data/wiki_727/train', 
                   val_dir='../data/wiki_50/test',
