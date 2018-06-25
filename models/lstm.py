@@ -26,10 +26,10 @@ def sent_to_tensor(sent):
     return torch.tensor([token_to_id(t) for t in sent.tokens])
 
 
-class SentEncoder(nn.Module):
+class LSTMLower(nn.Module):
     """ LSTM over a Batch of variable length sentences, maxpool over
     each sentence's hidden states to get its representation. """    
-    def __init__(self, hidden_dim, num_layers, bidir, drop_prob, method='max'):
+    def __init__(self, hidden_dim, num_layers, bidir, drop_prob, method):
         super().__init__()
         
         assert method in ['avg', 'last', 'max', 'sum'], 'Invalid method chosen.'
@@ -142,7 +142,7 @@ class Score(nn.Module):
 class TextSeg(nn.Module):
     """ Super class for taking an input batch of sentences from a Batch
     and computing the probability whether they end a segment or not """
-    def __init__(self, lstm_dim, score_dim, bidir, num_layers=2, drop_prob=0.20):
+    def __init__(self, lstm_dim, score_dim, bidir, num_layers=2, drop_prob=0.20, method='max'):
         super().__init__()
         
         # Compute input dimension size for LSTMHigher, Score
@@ -151,7 +151,7 @@ class TextSeg(nn.Module):
         
         # Chain modules together to get overall model
         self.model = nn.Sequential(
-            LSTMLower(lstm_dim, num_layers, bidir, drop_prob),
+            LSTMLower(lstm_dim, num_layers, bidir, drop_prob, method),
             LSTMHigher(input_dim, lstm_dim, num_layers, bidir, drop_prob),
             Score(input_dim, score_dim, out_dim=2, drop_prob=drop_prob)
         )
