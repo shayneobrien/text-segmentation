@@ -200,13 +200,15 @@ def read_document(filename, TRAIN, minlen=1):
             
             # This '========' indicates a new subsection
             if line.startswith('========'):
-                document.append(sent_tokenizer.tokenize(subsection.strip()))
+                tokenized = sent_tokenizer.tokenize(subsection.strip())
+                document.append(tokenized) if len(tokenized) > 0 else pass
                 subsection = ''
             else:
                 subsection += ' ' + line
         
         # Edge case of last subsection needs to be appended
-        document.append(sent_tokenizer.tokenize(subsection.strip()))
+        tokenized = sent_tokenizer.tokenize(subsection.strip())
+        document.append(tokenized) if len(tokenized) > 0 else pass
     
     # Keep only subsections longer than minlen
     document = [subsection for subsection in document if len(subsection) >= minlen]
