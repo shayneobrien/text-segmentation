@@ -175,8 +175,9 @@ def sample_nested_dir(directory, batch_size=100):
     while len(samples) < batch_size:
         try:
             files = safe_listdir(dirname)
-            subdir = random.sample(files, 1)[0]
-            dirname = os.path.join(dirname, subdir)
+            if files: # Edge case of empty directory
+                subdir = random.sample(files, 1)[0]
+                dirname = os.path.join(dirname, subdir)
         except NotADirectoryError:
             samples.append(dirname)
             dirname = directory
