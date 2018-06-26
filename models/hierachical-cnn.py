@@ -26,18 +26,14 @@ def sent_to_tensor(sent):
     return torch.tensor([token_to_id(t) for t in sent.tokens])
 
 
-class CNNEncoder(nn.Module):
-    """ CNN over a Batch of variable length sentences padded 
-    or truncated to maxlen. maxpool over
-    each sentence's hidden states to get its representation. 
+class CNNLower(nn.Module):
+    """ Convolve over words in windows within nrange for 
+    each sentence of a batch. Consider up to maxlen tokens.
     """
-        
-    def __init__(self, hidden_dim, drop_prob, maxlen, nrange, method):
+    def __init__(self, hidden_dim, drop_prob, maxlen, nrange):
         super().__init__()
         
         assert type(nrange) == list, 'Argument "nrange" is a list of token convolution sizes.'
-        assert method in ['avg', 'last', 'max', 'sum'], 'Invalid method chosen.'
-        self.method = eval('self._'+ method)
         
         weights = VECTORS.weights()
         
@@ -69,26 +65,59 @@ class CNNEncoder(nn.Module):
         # Cat together convolutions
         catted = torch.cat(convolved, dim=2)
         
-        # Squash down a dimension
-        representation = self.method(catted)
+        # Regroup into document boundaries
+        lower_output = batch.regroup(catted)
         
-        return representation
+        return lower_output
+
+
+class CNNHigher(nn.Module):
+    """ Convolve over sentence representations from each document
+    """    
+    def __init__(self, input_dim, hidden_dim, drop_prob, nrange, method):
+        super().__init__()
+        
+        assert type(nrange) == list, 'Argument "nrange" is a list of token convolution sizes.'
+        assert method in ['avg', 'last', 'max', 'sum'], 'Invalid method chosen.'
+        
+        self.method = eval('self._'+ method)
+        self.convs = nn.ModuleList([nn.Conv1d(in_channels=input_dim, 
+                                              out_channels=hidden_dim,
+                                              kernel_size=n)
+                                    for n in nrange])
+        
+        self.drop = drop_prob
     
+    def forward(self, lower_output):
+        
+        # Convolve over sentences in each document
+        convolved = [[conv(t) for conv in self.convs
+                      if t.shape[2] >= conv.kernel_size[0]]
+                     for t in lower_output]
+
+        # Cat the convolutions together
+        catted = [torch.cat(t, dim=2) for t in convolved]
+        
+        # Squash down dimension
+        higher_output = torch.cat([self.method(t) for t in catted], dim=0)
+        
+        return higher_output
+        
     def _avg(self, catted):
-        """ Average token states """
+        """ Average sentence states """
         return catted.mean(dim=1)
         
     def _max(self, catted):
-        """ Maxpool token states """
+        """ Maxpool over sentence states """
         return F.max_pool2d(catted, kernel_size=(catted.shape[1], 1)).squeeze()
         
     def _sum(self, catted):
-        """ Sum token states """
+        """ Sum sentence states """
         return catted.sum(dim=1)
 
 
 class Score(nn.Module):
-    """ Take outputs from encoder, produce probabilities for each
+    """ Take outputs from CNNHigher, produce probabilities for each
     sentence that it ends a segment. 
     """
     def __init__(self, input_dim, hidden_dim, out_dim, drop_prob):
@@ -108,19 +137,22 @@ class Score(nn.Module):
         return self.score(higher_output)
 
 
-class CNNScore(nn.Module):
+class ScoreCNN(nn.Module):
     """ Super class for taking an input batch of sentences from a Batch
     and computing the probability whether they end a segment or not 
     """
-    def __init__(self, hidden_dim, score_dim, drop_prob, maxlen, nrange, method):
+    def __init__(self, hidden_dim, score_dim, drop_prob, maxlen, 
+                 low_nrange, high_nrange, method):
         super().__init__()
                 
         # Compute input dimension size for Score
-        input_dim = sum([maxlen - (n-1) for n in nrange])
+        lower_dim = sum([maxlen - (n-1) for n in low_nrange])
+        input_dim = sum([lower_dim - (n-1) for n in high_nrange])
         
         # Chain modules together to get overall model
         self.model = nn.Sequential(
-            CNNEncoder(hidden_dim, drop_prob, maxlen, nrange, method),
+            CNNLower(hidden_dim, drop_prob, maxlen, low_nrange),
+            CNNHigher(hidden_dim, hidden_dim, drop_prob, high_nrange, method),
             Score(input_dim, score_dim, out_dim=2, drop_prob=drop_prob)
         )
         
@@ -129,8 +161,8 @@ class CNNScore(nn.Module):
 
 
 class Trainer:
-    """ Class to train, validate, and test a model
-    """
+    """ Class to train, validate, and test a model """
+    
     # Progress logging, initialization of metrics
     train_loss = []
     val_loss = [] 
@@ -363,19 +395,20 @@ class Trainer:
 
 
 # Original paper does 10 epochs across full dataset
-model = CNNScore(hidden_dim=256, 
+model = HierarchicalCNN(hidden_dim=256, 
                  score_dim=256, 
                  drop_prob=0.20, 
                  maxlen=64, 
-                 nrange=[3,4,5], 
+                 low_nrange=[3,4,5], 
+                 high_nrange=[1,2,3],
                  method='max')
 
 trainer = Trainer(model=model,
-                  train_dir='../data/wiki_727/train', 
+                  train_dir='../data/wiki_727/train',
                   val_dir='../data/wiki_50/test',
                   batch_size=8,
                   lr=1e-3)
 
-trainer.train(num_epochs=100, 
+trainer.train(num_epochs=100,
               steps=25,
               val_ckpt=1)

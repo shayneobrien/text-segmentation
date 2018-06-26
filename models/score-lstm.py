@@ -27,8 +27,9 @@ def sent_to_tensor(sent):
 
 
 class LSTMEncoder(nn.Module):
-    """ LSTM over a Batch of variable length sentences, maxpool over
-    each sentence's hidden states to get its representation. """    
+    """ LSTM over a Batch of variable length sentences, pool over
+    each sentence's hidden states to get its representation. 
+    """    
     def __init__(self, hidden_dim, num_layers, bidir, drop_prob, method):
         super().__init__()
         
@@ -68,29 +69,30 @@ class LSTMEncoder(nn.Module):
         return representation
     
     def _avg(self, restored):
-        """ Average hidden states """
+        """ Average token states """
         averaged = [sent.mean(dim=1) for sent in restored]
         return torch.stack(averaged).squeeze()
     
     def _last(self, restored):
-        """ Take last hidden state representation """
+        """ Take last token state representation """
         last = [sent[:, -1, :] for sent in restored]
         return torch.stack(last).squeeze()
         
     def _max(self, restored):
-        """ Maxpool over LSTM sentence states """
+        """ Maxpool over token states """
         maxpooled = [F.max_pool2d(sent, (sent.shape[1], 1)) for sent in restored]
         return torch.stack(maxpooled).squeeze()
         
     def _sum(self, restored):
-        """ Sum LSTM sentence states """
+        """ Sum token states """
         summed = [sent.sum(dim=1) for sent in restored]
         return torch.stack(summed).squeeze()
 
 
 class Score(nn.Module):
-    """ Take outputs from LSTMHigher, produce probabilities for each
-    sentence that it ends a segment. """
+    """ Take outputs from encoder, produce probabilities for each
+    sentence that it ends a segment. 
+    """
     def __init__(self, input_dim, hidden_dim, out_dim, drop_prob):
         super().__init__()
         
@@ -105,13 +107,13 @@ class Score(nn.Module):
         )
         
     def forward(self, higher_output):
-        scores = self.score(higher_output)
-        return scores
+        return self.score(higher_output)
 
 
-class ScoreLSTM(nn.Module):
+class LSTMScore(nn.Module):
     """ Super class for taking an input batch of sentences from a Batch
-    and computing the probability whether they end a segment or not """
+    and computing the probability whether they end a segment or not 
+    """
     def __init__(self, lstm_dim, score_dim, bidir, num_layers=2, drop_prob=0.20, method='max'):
         super().__init__()
         
@@ -363,11 +365,19 @@ class Trainer:
 
 
 # Original paper does 10 epochs across full dataset
-model = ScoreLSTM(lstm_dim=256, score_dim=256, bidir=True, num_layers=2, drop_prob=0.20, method='max')
+model = LSTMScore(lstm_dim=256, 
+                  score_dim=256, 
+                  bidir=True, 
+                  num_layers=2, 
+                  drop_prob=0.20, 
+                  method='max')
+
 trainer = Trainer(model=model,
                   train_dir='../data/wiki_727/train', 
                   val_dir='../data/wiki_50/test',
                   batch_size=8,
                   lr=1e-3)
 
-trainer.train(num_epochs=100, steps=25, val_ckpt=1)
+trainer.train(num_epochs=100, 
+              steps=25, 
+              val_ckpt=1)

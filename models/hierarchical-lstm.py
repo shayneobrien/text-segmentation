@@ -26,69 +26,102 @@ def sent_to_tensor(sent):
     return torch.tensor([token_to_id(t) for t in sent.tokens])
 
 
-class CNNEncoder(nn.Module):
-    """ CNN over a Batch of variable length sentences padded 
-    or truncated to maxlen. maxpool over
+class LSTMLower(nn.Module):
+    """ LSTM over a Batch of variable length sentences, pool over
     each sentence's hidden states to get its representation. 
-    """
-        
-    def __init__(self, hidden_dim, drop_prob, maxlen, nrange, method):
+    """    
+    def __init__(self, hidden_dim, num_layers, bidir, drop_prob, method):
         super().__init__()
         
-        assert type(nrange) == list, 'Argument "nrange" is a list of token convolution sizes.'
         assert method in ['avg', 'last', 'max', 'sum'], 'Invalid method chosen.'
-        self.method = eval('self._'+ method)
+        self.method = eval('self._' + method)
         
         weights = VECTORS.weights()
         
-        self.embeddings = nn.Embedding(weights.shape[0], weights.shape[1], padding_idx=0)
+        self.embeddings = nn.Embedding(weights.shape[0], weights.shape[1])
         self.embeddings.weight.data.copy_(weights)
-                
-        self.convs = nn.ModuleList([nn.Conv1d(in_channels=weights.shape[1], 
-                                              out_channels=hidden_dim,
-                                              kernel_size=n)
-                                    for n in nrange])
         
         self.drop = drop_prob
-        self.maxlen = maxlen
-    
+        
+        self.lstm = nn.LSTM(weights.shape[1], hidden_dim, num_layers=num_layers,
+                            bidirectional=bidir, batch_first=True, dropout=self.drop)
+        
     def forward(self, batch):
         
         # Convert sentences to embed lookup ID tensors
-        sent_tensors = [sent_to_tensor(s).unsqueeze(1) for s in batch]
+        sent_tensors = [sent_to_tensor(s) for s in batch]
         
-        # Pad to maximum length sentence in the batch
-        padded, _ = pad_and_stack(sent_tensors, pad_size=self.maxlen)
+        # Embed tokens in each sentence
+        embedded = [F.dropout(self.embeddings(s), self.drop) for s in sent_tensors]
+
+        # Pad, pack  embeddings of variable length sequences of tokens
+        packed, reorder = pad_and_pack(embedded)
+                
+        # LSTM over the packed embeddings
+        lstm_out, _ = self.lstm(packed)
+                
+        # Unpack, unpad, and restore original ordering of lstm outputs
+        restored = unpack_and_unpad(lstm_out, reorder)
         
-        # Embed tokens in each sentence, apply dropout, transpose for input to CNN
-        embedded = F.dropout(self.embeddings(padded), 0.20).squeeze().transpose(1,2)
+        # Get lower output representation
+        representation = self.method(restored)
+        
+        # Regroup the document sentences for next pad_and_pack
+        lower_output = batch.regroup(representation)
+        
+        return lower_output
     
-        # Convolve over words
-        convolved = [conv(embedded) for conv in self.convs]
-        
-        # Cat together convolutions
-        catted = torch.cat(convolved, dim=2)
-        
-        # Squash down a dimension
-        representation = self.method(catted)
-        
-        return representation
+    def _avg(self, restored):
+        """ Average hidden states """
+        averaged = [sent.mean(dim=1) for sent in restored]
+        return torch.stack(averaged).squeeze()
     
-    def _avg(self, catted):
-        """ Average token states """
-        return catted.mean(dim=1)
+    def _last(self, restored):
+        """ Take last token state representation """
+        last = [sent[:, -1, :] for sent in restored]
+        return torch.stack(last).squeeze()
         
-    def _max(self, catted):
+    def _max(self, restored):
         """ Maxpool token states """
-        return F.max_pool2d(catted, kernel_size=(catted.shape[1], 1)).squeeze()
+        maxpooled = [F.max_pool2d(sent, (sent.shape[1], 1)) for sent in restored]
+        return torch.stack(maxpooled).squeeze()
         
-    def _sum(self, catted):
+    def _sum(self, restored):
         """ Sum token states """
-        return catted.sum(dim=1)
+        summed = [sent.sum(dim=1) for sent in restored]
+        return torch.stack(summed).squeeze()
+
+
+class LSTMHigher(nn.Module):
+    """ LSTM over the sentence representations from LSTMLower 
+    """
+    def __init__(self, input_dim, hidden_dim, num_layers, bidir, drop_prob):
+        super().__init__()
+        
+        self.drop = drop_prob
+        
+        self.lstm = nn.LSTM(input_dim, hidden_dim, num_layers=num_layers,
+                            bidirectional=bidir, batch_first=True, dropout=self.drop)
+
+    def forward(self, lower_output):
+        
+        # Pad, pack variable length sentence representations
+        packed, reorder = pad_and_pack(lower_output)
+        
+        # LSTM over sentence representations
+        lstm_out, _ = self.lstm(packed)
+        
+        # Restore original ordering of sentences
+        restored = unpack_and_unpad(lstm_out, reorder)
+        
+        # Concatenate the sentences together for final scoring
+        higher_output = torch.cat([sent.squeeze() for sent in restored])
+        
+        return higher_output
 
 
 class Score(nn.Module):
-    """ Take outputs from encoder, produce probabilities for each
+    """ Take outputs from LSTMHigher, produce probabilities for each
     sentence that it ends a segment. 
     """
     def __init__(self, input_dim, hidden_dim, out_dim, drop_prob):
@@ -103,24 +136,26 @@ class Score(nn.Module):
             nn.Dropout(drop_prob),
             nn.Linear(hidden_dim, out_dim),
         )
-
+        
     def forward(self, higher_output):
         return self.score(higher_output)
 
 
-class CNNScore(nn.Module):
+class HierarchicalLSTM(nn.Module):
     """ Super class for taking an input batch of sentences from a Batch
     and computing the probability whether they end a segment or not 
     """
-    def __init__(self, hidden_dim, score_dim, drop_prob, maxlen, nrange, method):
+    def __init__(self, lstm_dim, score_dim, bidir, num_layers=2, drop_prob=0.20, method='max'):
         super().__init__()
-                
-        # Compute input dimension size for Score
-        input_dim = sum([maxlen - (n-1) for n in nrange])
+        
+        # Compute input dimension size for LSTMHigher, Score
+        num_dirs = 2 if bidir else 1
+        input_dim = lstm_dim*num_dirs
         
         # Chain modules together to get overall model
         self.model = nn.Sequential(
-            CNNEncoder(hidden_dim, drop_prob, maxlen, nrange, method),
+            LSTMLower(lstm_dim, num_layers, bidir, drop_prob, method),
+            LSTMHigher(input_dim, lstm_dim, num_layers, bidir, drop_prob),
             Score(input_dim, score_dim, out_dim=2, drop_prob=drop_prob)
         )
         
@@ -129,7 +164,7 @@ class CNNScore(nn.Module):
 
 
 class Trainer:
-    """ Class to train, validate, and test a model
+    """ Class to train, validate, and test a model 
     """
     # Progress logging, initialization of metrics
     train_loss = []
@@ -321,7 +356,6 @@ class Trainer:
         
     def viz(self):
         """ Visualize progress: train loss, val loss, word- sent-level metrics """
-        
         # Initialize plot
         _, axes = plt.subplots(ncols=2, nrows=2, sharex='col', sharey='col')
         val, word, train, sent = axes.ravel()
@@ -363,12 +397,10 @@ class Trainer:
 
 
 # Original paper does 10 epochs across full dataset
-model = CNNScore(hidden_dim=256, 
-                 score_dim=256, 
-                 drop_prob=0.20, 
-                 maxlen=64, 
-                 nrange=[3,4,5], 
-                 method='max')
+model = HierarchicalLSTM(lstm_dim=256, 
+                score_dim=256, 
+                bidir=True, 
+                num_layers=2)
 
 trainer = Trainer(model=model,
                   train_dir='../data/wiki_727/train', 
@@ -377,5 +409,5 @@ trainer = Trainer(model=model,
                   lr=1e-3)
 
 trainer.train(num_epochs=100, 
-              steps=25,
+              steps=25, 
               val_ckpt=1)
