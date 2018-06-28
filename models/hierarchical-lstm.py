@@ -1,7 +1,5 @@
 # TODO:
-# Random edge case bugs (random sampling, empty tensors..)
-
-# Baselines: Maxpool-LSTM (✓), Random (✓), Hearst, Choi, GraphSeg, Linear Regression
+# Baselines: Choi, GraphSeg, sklearn Linear Regression
 # Argparse, run.py for downloading data
 
 import torch
@@ -18,7 +16,7 @@ class LSTMLower(nn.Module):
     def __init__(self, hidden_dim, num_layers, bidir, drop_prob, method):
         super().__init__()
         
-        assert method in ['avg', 'last', 'max', 'sum'], 'Invalid method chosen.'
+        assert method in ['avg', 'last', 'max', 'sum', 'attn'], 'Invalid method chosen.'
         self.method = eval('self._' + method)
         
         weights = VECTORS.weights()
@@ -47,7 +45,7 @@ class LSTMLower(nn.Module):
                 
         # Unpack, unpad, and restore original ordering of lstm outputs
         restored = unpack_and_unpad(lstm_out, reorder)
-        
+                
         # Get lower output representation
         representation = self.method(restored)
         
@@ -55,6 +53,10 @@ class LSTMLower(nn.Module):
         lower_output = batch.regroup(representation)
         
         return lower_output
+    
+    def _attn(self, restored):
+        weighted = [F.softmax(sent, dim=1)*sent for sent in restored]
+        return self._sum(weighted)
     
     def _avg(self, restored):
         """ Average hidden states """
@@ -146,13 +148,15 @@ class HierarchicalLSTM(nn.Module):
         
     def forward(self, batch):
         return self.model(batch)
-
+    
 
 # Original paper does 10 epochs across full dataset
 model = HierarchicalLSTM(lstm_dim=256, 
-                score_dim=256, 
-                bidir=True, 
-                num_layers=2)
+                        score_dim=256, 
+                        bidir=True, 
+                        num_layers=2,
+                        drop_prob=0.20,
+                        method='attn')
 
 trainer = Trainer(model=model,
                   train_dir='../data/wiki_727/train', 
@@ -162,4 +166,5 @@ trainer = Trainer(model=model,
 
 trainer.train(num_epochs=100, 
               steps=25, 
-              val_ckpt=1)
+              val_ckpt=1,
+              visualize=True)
