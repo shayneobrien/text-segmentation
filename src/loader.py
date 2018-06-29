@@ -31,11 +31,10 @@ class Batch:
         sents = flatten([d.sents for d in documents])
         labels = torch.cat([d.labels for d in documents])
         return ix, sents, labels
-        
+    
     def regroup(self, groups):
-        """ Regroup any type of groups of same length as documents back
-        into list of lists for each document 
-        (Used for Neural Network hidden states) """
+        """ Regroup any type, of groups of same length as documents back
+        into list of lists for each document (e.g. for Neural Network hidden states) """
         regrouped = [groups[self.ix[i]:self.ix[i+1]] for i in range(len(self.ix)-1)]
         return regrouped
 
@@ -151,7 +150,6 @@ class LazyVectors:
 
 def crawl_directory(dirname):
     """ Walk a nested directory to get all filename ending in a pattern """
-    filenames = []
     for path, subdirs, files in os.walk(dirname):
         for name in files:
             if not name.endswith('.DS_Store'):

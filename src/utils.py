@@ -25,7 +25,7 @@ def unpack_and_unpad(lstm_out, reorder):
     unpadded = [unpacked[idx][:val] for idx, val in enumerate(sizes)]
     
     # Restore original ordering
-    regrouped = [unpadded[idx].unsqueeze(0) for idx in reorder]
+    regrouped = [unpadded[idx] for idx in reorder]
     
     return regrouped
 

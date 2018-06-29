@@ -144,7 +144,7 @@ class Metrics:
 
 
 def avg_dicts(dicts_list):
-    """ Average two non-nested dictionaries together across their shared keys """
+    """ Average two dictionaries together across their shared keys """
     keys = list(set([tuple(d.keys()) for d in dicts_list]))[0]
     merged = {k: sum([d[k] for d in dicts_list])/len(dicts_list) for k in keys}
     return merged

@@ -216,7 +216,7 @@ class Trainer:
         # Display the plot
         plt.show()
         
-    def debugging(self, preds, batch, show_probs=False):
+    def debugging(self, preds, batch, show_probs=True):
         """ Check how many segment boundaries were correctly predicted """
         labels = batch.labels
         logits = F.softmax(preds, dim=1)
@@ -232,15 +232,9 @@ class Trainer:
         total_texts = (batch.labels == 0).sum().item()
         
         if show_probs:
-            print('\nBoundary Probabilities:')
-            print([(logit[1].item(), label.item()) 
-                   for logit, label in zip(logits, batch.labels)
-                   if label == 1][:25])
-
-            print('\nText Probabilities:')
-            print([(logit[1].item(), label.item()) 
-                   for logit, label in zip(logits, batch.labels)
-                   if label == 0][:25])
+            means = logits.mean(dim=0)
+            print('Label 0: %f | Label 1: %f' 
+                   % (means[0].item(), means[1].item()))
         
         return segs_correct, texts_correct, total_segs, total_texts
     
