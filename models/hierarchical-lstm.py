@@ -1,7 +1,3 @@
-# TODO:
-# Baselines: Choi, GraphSeg, sklearn Linear Regression
-# Argparse, run.py for downloading data
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -15,10 +11,7 @@ class LSTMLower(nn.Module):
     """    
     def __init__(self, hidden_dim, num_layers, bidir, drop_prob, method):
         super().__init__()
-        
-        assert method in ['avg', 'last', 'max', 'sum', 'attn'], 'Invalid method chosen.'
-        self.method = eval('self._' + method)
-        
+                
         weights = VECTORS.weights()
         
         self.embeddings = nn.Embedding(weights.shape[0], weights.shape[1])
@@ -28,6 +21,8 @@ class LSTMLower(nn.Module):
         
         self.lstm = nn.LSTM(weights.shape[1], hidden_dim, num_layers=num_layers,
                             bidirectional=bidir, batch_first=True, dropout=self.drop)
+        
+        self.attn = Attention(method)
         
     def forward(self, batch):
         
@@ -45,38 +40,14 @@ class LSTMLower(nn.Module):
                 
         # Unpack, unpad, and restore original ordering of lstm outputs
         restored = unpack_and_unpad(lstm_out, reorder)
-                
+                                        
         # Get lower output representation
-        representation = self.method(restored)
+        representation = self.attn(restored)
         
         # Regroup the document sentences for next pad_and_pack
-        lower_output = batch.regroup(representation)
+        lower_output = batch.regroup(torch.stack(representation))
         
         return lower_output
-    
-    def _attn(self, restored):
-        weighted = [F.softmax(sent, dim=1)*sent for sent in restored]
-        return self._sum(weighted)
-    
-    def _avg(self, restored):
-        """ Average hidden states """
-        averaged = [sent.mean(dim=1) for sent in restored]
-        return torch.stack(averaged).squeeze()
-    
-    def _last(self, restored):
-        """ Take last token state representation """
-        last = [sent[:, -1, :] for sent in restored]
-        return torch.stack(last).squeeze()
-        
-    def _max(self, restored):
-        """ Maxpool token states """
-        maxpooled = [F.max_pool2d(sent, (sent.shape[1], 1)) for sent in restored]
-        return torch.stack(maxpooled).squeeze()
-        
-    def _sum(self, restored):
-        """ Sum token states """
-        summed = [sent.sum(dim=1) for sent in restored]
-        return torch.stack(summed).squeeze()
 
 
 class LSTMHigher(nn.Module):
@@ -108,7 +79,7 @@ class LSTMHigher(nn.Module):
 
 
 class Score(nn.Module):
-    """ Take outputs from LSTMHigher, produce probabilities for each
+    """ Take outputs from encoder, produce probabilities for each
     sentence that it ends a segment. 
     """
     def __init__(self, input_dim, hidden_dim, out_dim, drop_prob):
@@ -126,6 +97,39 @@ class Score(nn.Module):
         
     def forward(self, higher_output):
         return self.score(higher_output)
+
+    
+class Attention:
+    """ Given regrouped representations from batch, perform pooling over them
+    using one of several methods. 
+    """
+    def __init__(self, method):
+        assert method in ['avg', 'last', 'max', 'sum', 'attn'], 'Invalid method chosen.'
+        self.method = eval('self._' + method)
+        
+    def __call__(self, *args):
+        return self.method(*args)
+    
+    def _attn(self, restored):
+        """ Weighted sum  """
+        weighted = [F.softmax(sent, dim=0)*sent for sent in restored]
+        return self._sum(weighted)
+    
+    def _avg(self, restored):
+        """ Average hidden states """
+        return [sent.mean(dim=0) for sent in restored]
+    
+    def _last(self, restored):
+        """ Take last token state representation """
+        return [sent[-1, :] for sent in restored]
+        
+    def _max(self, restored):
+        """ Maxpool token states """
+        return [torch.max(sent, dim=0)[0] for sent in restored]
+        
+    def _sum(self, restored):
+        """ Sum token states """
+        return [sent.sum(dim=0) for sent in restored]
 
 
 class HierarchicalLSTM(nn.Module):

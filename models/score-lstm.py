@@ -5,16 +5,13 @@ import torch.nn.functional as F
 from trainer import *
 
 
-class LSTMEncoder(nn.Module):
+class LSTMLower(nn.Module):
     """ LSTM over a Batch of variable length sentences, pool over
     each sentence's hidden states to get its representation. 
     """    
     def __init__(self, hidden_dim, num_layers, bidir, drop_prob, method):
         super().__init__()
-        
-        assert method in ['avg', 'last', 'max', 'sum'], 'Invalid method chosen.'
-        self.method = eval('self._'+ method)
-        
+                
         weights = VECTORS.weights()
         
         self.embeddings = nn.Embedding(weights.shape[0], weights.shape[1])
@@ -24,6 +21,8 @@ class LSTMEncoder(nn.Module):
         
         self.lstm = nn.LSTM(weights.shape[1], hidden_dim, num_layers=num_layers,
                             bidirectional=bidir, batch_first=True, dropout=self.drop)
+        
+        self.attn = Attention(method)
         
     def forward(self, batch):
         
@@ -41,31 +40,14 @@ class LSTMEncoder(nn.Module):
                 
         # Unpack, unpad, and restore original ordering of lstm outputs
         restored = unpack_and_unpad(lstm_out, reorder)
-        
+                                        
         # Get lower output representation
-        representation = self.method(restored)
+        representation = self.attn(restored)
         
-        return representation
-    
-    def _avg(self, restored):
-        """ Average token states """
-        averaged = [sent.mean(dim=1) for sent in restored]
-        return torch.stack(averaged).squeeze()
-    
-    def _last(self, restored):
-        """ Take last token state representation """
-        last = [sent[:, -1, :] for sent in restored]
-        return torch.stack(last).squeeze()
+        # Regroup the document sentences for next pad_and_pack
+        lower_output = torch.stack(representation)
         
-    def _max(self, restored):
-        """ Maxpool over token states """
-        maxpooled = [F.max_pool2d(sent, (sent.shape[1], 1)) for sent in restored]
-        return torch.stack(maxpooled).squeeze()
-        
-    def _sum(self, restored):
-        """ Sum token states """
-        summed = [sent.sum(dim=1) for sent in restored]
-        return torch.stack(summed).squeeze()
+        return lower_output
 
 
 class Score(nn.Module):
@@ -88,6 +70,39 @@ class Score(nn.Module):
     def forward(self, higher_output):
         return self.score(higher_output)
 
+    
+class Attention:
+    """ Given regrouped representations from batch, perform pooling over them
+    using one of several methods. 
+    """
+    def __init__(self, method):
+        assert method in ['avg', 'last', 'max', 'sum', 'attn'], 'Invalid method chosen.'
+        self.method = eval('self._' + method)
+        
+    def __call__(self, *args):
+        return self.method(*args)
+    
+    def _attn(self, restored):
+        """ Weighted sum  """
+        weighted = [F.softmax(sent, dim=0)*sent for sent in restored]
+        return self._sum(weighted)
+    
+    def _avg(self, restored):
+        """ Average hidden states """
+        return [sent.mean(dim=0) for sent in restored]
+    
+    def _last(self, restored):
+        """ Take last token state representation """
+        return [sent[-1, :] for sent in restored]
+        
+    def _max(self, restored):
+        """ Maxpool token states """
+        return [torch.max(sent, dim=0)[0] for sent in restored]
+        
+    def _sum(self, restored):
+        """ Sum token states """
+        return [sent.sum(dim=0) for sent in restored]
+
 
 class LSTMScore(nn.Module):
     """ Super class for taking an input batch of sentences from a Batch
@@ -102,13 +117,13 @@ class LSTMScore(nn.Module):
         
         # Chain modules together to get overall model
         self.model = nn.Sequential(
-            LSTMEncoder(lstm_dim, num_layers, bidir, drop_prob, method),
+            LSTMLower(lstm_dim, num_layers, bidir, drop_prob, method),
             Score(input_dim, score_dim, out_dim=2, drop_prob=drop_prob)
         )
         
     def forward(self, batch):
         return self.model(batch)
-    
+
     
 # Original paper does 10 epochs across full dataset
 model = LSTMScore(lstm_dim=256, 
