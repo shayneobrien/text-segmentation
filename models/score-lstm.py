@@ -22,7 +22,7 @@ class LSTMLower(nn.Module):
         self.lstm = nn.LSTM(weights.shape[1], hidden_dim, num_layers=num_layers,
                             bidirectional=bidir, batch_first=True, dropout=self.drop)
         
-        self.attn = Attention(method)
+        self.pool = Pool(method)
         
     def forward(self, batch):
         
@@ -42,7 +42,7 @@ class LSTMLower(nn.Module):
         restored = unpack_and_unpad(lstm_out, reorder)
                                         
         # Get lower output representation
-        representation = self.attn(restored)
+        representation = self.pool(restored)
         
         # Regroup the document sentences for next pad_and_pack
         lower_output = torch.stack(representation)
@@ -71,18 +71,18 @@ class Score(nn.Module):
         return self.score(higher_output)
 
     
-class Attention:
+class Pool:
     """ Given regrouped representations from batch, perform pooling over them
     using one of several methods. 
     """
     def __init__(self, method):
-        assert method in ['avg', 'last', 'max', 'sum', 'attn'], 'Invalid method chosen.'
+        assert method in ['avg', 'last', 'max', 'sum', 'weighted'], 'Invalid method chosen.'
         self.method = eval('self._' + method)
         
     def __call__(self, *args):
         return self.method(*args)
     
-    def _attn(self, restored):
+    def _weighted(self, restored):
         """ Weighted sum  """
         weighted = [F.softmax(sent, dim=0)*sent for sent in restored]
         return self._sum(weighted)
