@@ -9,9 +9,9 @@ from collections import defaultdict
 from copy import deepcopy
 from tqdm import tqdm, tqdm_notebook
 
-from loader import *
-from utils import *
-from metrics import Metrics, avg_dicts
+from src.loader import *
+from src.utils import *
+from src.metrics import Metrics, avg_dicts
 
 
 # Load in corpus, lazily load in word vectors.

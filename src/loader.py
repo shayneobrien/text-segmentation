@@ -1,7 +1,7 @@
 import torch
 from torchtext.vocab import Vectors
 
-import os, re, nltk, random
+import os, re, nltk, random, sys
 from boltons.iterutils import windowed
 from cached_property import cached_property
 
@@ -122,7 +122,7 @@ class LazyVectors:
         # Map string -> intersected index.
         self._stoi = {s: i for i, s in enumerate(self.vocab)}
     
-    def get_vocab(self, filename='vocabulary.txt'):
+    def get_vocab(self, filename='../src/vocabulary.txt'):
         """ Read in vocabulary (top 30K words, covers ~93.5% of all tokens) """ 
         with open(filename, 'r') as f:
             vocab = f.read().split(',')
