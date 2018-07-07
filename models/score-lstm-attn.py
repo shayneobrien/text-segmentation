@@ -1,9 +1,3 @@
-
-# coding: utf-8
-
-# In[2]:
-
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -48,10 +42,7 @@ class LSTMLower(nn.Module):
         weighted = self.attn(lstm_out)
         
         # Restore original ordering
-        representation = weighted[reorder]
-        
-        # Regroup the document sentences for next pad_and_pack
-        lower_output = batch.regroup(representation)
+        lower_output = weighted[reorder]
         
         return lower_output
 
@@ -73,8 +64,8 @@ class Score(nn.Module):
             nn.Linear(hidden_dim, out_dim),
         )
         
-    def forward(self, higher_output):
-        return self.score(higher_output)
+    def forward(self, lower_output):
+        return self.score(lower_output)
 
 
 class SelfAttention(nn.Module):
@@ -170,4 +161,3 @@ trainer = Trainer(model=model,
 trainer.train(num_epochs=100, 
               steps=25, 
               val_ckpt=1)
-
