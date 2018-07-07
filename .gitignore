@@ -1,6 +1,6 @@
 env/
 data/
 *__pycache__
-/.DS_store
-/.ipynb_checkpoints/
+.DS_store
+.ipynb_checkpoints/
 .vector_cache/
