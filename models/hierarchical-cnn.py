@@ -16,11 +16,13 @@ class CNNLower(nn.Module):
     def __init__(self, hidden_dim, drop_prob, maxlen, nrange):
         super().__init__()
 
-        assert type(nrange) == list, 'Argument "nrange" is a list of token convolution sizes.'
+        assert type(nrange) == list, 'Argument "nrange" should be list.'
 
         weights = VECTORS.weights()
 
-        self.embeddings = nn.Embedding(weights.shape[0], weights.shape[1], padding_idx=0)
+        self.embeddings = nn.Embedding(weights.shape[0],
+                                       weights.shape[1],
+                                       padding_idx=0)
         self.embeddings.weight.data.copy_(weights)
 
         self.convs = nn.ModuleList([nn.Conv1d(in_channels=weights.shape[1],
@@ -40,7 +42,7 @@ class CNNLower(nn.Module):
         padded, _ = pad_and_stack(sent_tensors, pad_size=self.maxlen)
 
         # Embed tokens in each sentence, apply dropout, transpose for input to CNN
-        embedded = F.dropout(self.embeddings(padded), 0.20).squeeze().transpose(1,2)
+        embedded = F.dropout(self.embeddings(padded), self.drop).squeeze().transpose(1,2)
 
         # Convolve over words
         convolved = [conv(embedded) for conv in self.convs]
@@ -60,8 +62,8 @@ class CNNHigher(nn.Module):
     def __init__(self, input_dim, hidden_dim, drop_prob, nrange, method):
         super().__init__()
 
-        assert type(nrange) == list, 'Argument "nrange" is a list of token convolution sizes.'
-        assert method in ['avg', 'last', 'max', 'sum'], 'Invalid method chosen.'
+        assert type(nrange) == list, 'Argument "nrange" should be list.'
+        assert method in ['avg', 'last', 'max', 'sum'], 'Invalid method.'
 
         self.method = eval('self._'+ method)
         self.convs = nn.ModuleList([nn.Conv1d(in_channels=input_dim,
@@ -142,20 +144,22 @@ class HierarchicalCNN(nn.Module):
     def forward(self, batch):
         return self.model(batch)
 
+
 if __name__ == '__main__':
     model = HierarchicalCNN(hidden_dim=256,
-                     score_dim=256,
-                     drop_prob=0.20,
-                     maxlen=64,
-                     low_nrange=[3,4,5],
-                     high_nrange=[1,2,3],
-                     method='max')
+                            score_dim=256,
+                            drop_prob=0.20,
+                            maxlen=64,
+                            low_nrange=[3,4,5],
+                            high_nrange=[1,2,3],
+                            method='max')
 
     trainer = Trainer(model=model,
                       train_dir='../data/wiki_727/train',
                       val_dir='../data/wiki_50/test',
                       batch_size=4,
-                      lr=1e-3)
+                      lr=1e-3,
+                      visualize=False)
 
     trainer.train(num_epochs=100,
                   steps=5,

@@ -1,11 +1,15 @@
-import random
-from loader import flatten, crawl_directory, sent_tokenizer, PseudoBatch, counts_to_labels
-from metrics import Metrics, avg_dicts
+import os, sys
+module_path = os.path.abspath(os.path.join('..'))
+sys.path.append(module_path)
 
+import random
 from tqdm import tqdm
 
+from src.loader import flatten, crawl_directory, sent_tokenizer, PseudoBatch, counts_to_labels
+from src.metrics import Metrics, avg_dicts
 
-class Random:
+
+class RandomBaseline:
     """ Random baseline: probability of 1/(Avg seg length)
     that a sentence ends a seg
     """
@@ -21,6 +25,7 @@ class Random:
     def validate(self, dirname):
         """ Sample N floats in range [0,1]. If a float is less than the inverse
         of the average segment length, then say that is a predicted segmentation """
+
         if 'probability' not in self.__dict__:
             self.probability, self.labels, self.counts = self.parametrize(dirname)
 
@@ -62,7 +67,7 @@ class Random:
         return [c for c in counts if c >= minlen]
 
     def cross_validate(self, *args, trials=100):
-        """  """
+        """ Run many trails with different randomization seeds """
         dictionaries = []
         for seed in tqdm(range(trials)):
             random.seed(seed)
@@ -72,8 +77,8 @@ class Random:
         merged = avg_dicts(dictionaries)
         return merged
 
-
-random_baseline = Random()
-metrics_dict = random_baseline.cross_validate('../data/wiki_50/test', trials=100)
-for k, v in metrics_dict.items():
-    print(k, ':', v)
+if __name__ == '__main__':
+    random_baseline = RandomBaseline()
+    metrics_dict = random_baseline.cross_validate('../data/wiki_50/test', trials=100)
+    for k, v in metrics_dict.items():
+        print("{:<8} {:<15}".format(k, v))

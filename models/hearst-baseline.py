@@ -381,6 +381,6 @@ class TokenTableField(object):
 
 if __name__ == '__main__':
     texttile = HearstTextTiler()
-    merged = texttile.validate('../data/wiki_50')
-    for k, v in merged.items():
+    metrics_dict = texttile.validate('../data/wiki_50')
+    for k, v in metrics_dict.items():
         print("{:<8} {:<15}".format(k, v))
