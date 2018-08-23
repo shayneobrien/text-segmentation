@@ -1,5 +1,5 @@
 # Text Segmentation
-Neural and nonneural text segmentation algorithms....
+Neural and nonneural text segmentation algorithms.....
 
 
 # Notes:
