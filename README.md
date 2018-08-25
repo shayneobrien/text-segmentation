@@ -6,9 +6,9 @@ Neural and nonneural text segmentation algorithms......
 
 
 # TODOs:
-run.py for downloading all datasets
-Baselines: Random (✓), Hearst (✓), Linear Regression (✓), GraphSeg, Choi
-Argparse, streamlining tests
+run.py for downloading all datasets /
+Baselines: Random (✓), Hearst (✓), Linear Regression (✓), GraphSeg, Choi /
+Argparse, streamlining tests /
 /
 # Datasets
 
