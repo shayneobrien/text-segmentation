@@ -64,6 +64,7 @@ class BagOfWords:
         idx = self._stoi.get(s)
         return idx + 1 if idx else self.unk_idx
 
+
 if __name__ == '__main__':
     model = LinearRegression()
 
